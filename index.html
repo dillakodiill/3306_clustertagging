@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Peta Fraud Detector SE2026 - Super Ringan</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<style>
+html,body,#map{height:100%;margin:0}
+body{font-family:Arial,sans-serif}
+#map{background:#eef2f5}
+.panel{position:absolute;z-index:1000;top:10px;left:10px;background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.2);font-size:13px;max-width:290px}
+.panel select{width:100%;margin-top:6px;padding:5px}
+.status{margin-top:6px;font-size:11px;color:#555}
+.legend{margin-top:7px;line-height:1.5}
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div class="panel">
+  <b>Fraud Detector SE2026</b>
+  <div>Mode: <span id="mode">Cluster</span></div>
+  <select id="enumFilter"><option value="">Semua Enumerator</option></select>
+  <div class="status" id="status">Memuat cluster...</div>
+  <div class="legend">Zoom &lt; 14: cluster<br>Zoom 14: cluster + SLS<br>Zoom ≥ 15: assignment + SLS</div>
+</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+const DATA_BASE = 'peta_fraud_detector_20260906_data/';
+const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView([-7.72,110.0],10);
+
+const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
+ maxZoom:20,attribution:'Tiles © Esri'
+}).addTo(map);
+const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
+ maxZoom:20,attribution:'© OpenStreetMap contributors'
+});
+L.control.layers({'Satellite':satellite,'OpenStreetMap':osm},null,{collapsed:true}).addTo(map);
+
+let clusters=[], assignments=null, slsLayer=null, assignmentLayer=null;
+let slsLoading=false, assignLoading=false;
+let currentFilter='';
+
+const $=id=>document.getElementById(id);
+function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+
+fetch(DATA_BASE+'clusters.json').then(r=>r.json()).then(data=>{
+ clusters=data;
+ const sel=$('enumFilter');
+ [...new Set(clusters.map(x=>x.e).filter(Boolean))].sort().forEach(e=>{
+   const o=document.createElement('option'); o.value=e; o.textContent=e; sel.appendChild(o);
+ });
+ drawClusters();
+ $('status').textContent=`${clusters.length} cluster`;
+}).catch(e=>$('status').textContent='Gagal memuat cluster: '+e);
+
+function drawClusters(){
+ if(window.clusterLayer) map.removeLayer(window.clusterLayer);
+ window.clusterLayer=L.layerGroup();
+ clusters.forEach(c=>{
+   if(currentFilter && c.e!==currentFilter)return;
+   const radius=Math.max(7,Math.min(24,5+Math.sqrt(c.u)*2));
+   const m=L.circleMarker([c.lat,c.lon],{
+     radius:radius,weight:2,fillOpacity:.75,opacity:.9
+   });
+   m.bindPopup(`<b>Cluster</b><br>Enumerator: ${esc(c.e)}<br>Bangunan unik: <b>${c.u}</b><br>Total assignment/KK: ${c.s}<br>Lat: ${c.lat}<br>Lon: ${c.lon}`);
+   window.clusterLayer.addLayer(m);
+ });
+ window.clusterLayer.addTo(map);
+}
+
+function ensureAssignments(){
+ if(assignments||assignLoading)return;
+ assignLoading=true; $('status').textContent='Memuat assignment...';
+ fetch(DATA_BASE+'assignments.json').then(r=>r.json()).then(data=>{
+   assignments=data; assignLoading=false; drawAssignments();
+ }).catch(e=>{assignLoading=false;$('status').textContent='Gagal memuat assignment';});
+}
+
+function drawAssignments(){
+ if(assignmentLayer) map.removeLayer(assignmentLayer);
+ assignmentLayer=L.layerGroup();
+ assignments.forEach(a=>{
+   if(currentFilter && a.e!==currentFilter)return;
+   const m=L.circleMarker([a.la,a.lo],{radius:4,weight:1,fillOpacity:.9,opacity:.9});
+   m.bindPopup(
+    `<b>Assignment</b><br>`+
+    `Assignment ID: ${esc(a.a)}<br>`+
+    `Nama: ${esc(a.n)}<br>`+
+    `Level 6: <b>${esc(a.l)}</b><br>`+
+    `No Bangunan: <b>${esc(a.b)}</b><br>`+
+    `Jenis: ${esc(a.t)}<br>`+
+    `Enumerator: ${esc(a.e)}<br>`+
+    `Accuracy: ${a.ac??'-'} m`
+   );
+   assignmentLayer.addLayer(m);
+ });
+ assignmentLayer.addTo(map);
+ $('status').textContent=`${assignments.length} assignment`;
+}
+
+function ensureSLS(){
+ if(slsLayer||slsLoading)return;
+ slsLoading=true; $('status').textContent='Memuat batas SLS...';
+ fetch(DATA_BASE+'sls.json').then(r=>r.json()).then(data=>{
+   slsLoading=false;
+   slsLayer=L.geoJSON(data,{
+     style:{weight:1,color:'#e00000',fill:false,opacity:.8},
+     onEachFeature:(f,l)=>{
+       const p=f.properties||{};
+       l.bindPopup(`<b>SLS</b><br>Kecamatan: ${esc(p.k)}<br>Desa: ${esc(p.d)}<br>SLS: ${esc(p.s)}<br>ID SLS: ${esc(p.i)}`);
+     }
+   }).addTo(map);
+   updateSLSLabels(data);
+   $('status').textContent='Batas SLS aktif';
+ }).catch(e=>{slsLoading=false;$('status').textContent='Gagal memuat SLS';});
+}
+
+let slsLabels=null;
+function updateSLSLabels(data){
+ if(slsLabels){map.removeLayer(slsLabels);slsLabels=null;}
+ if(map.getZoom()<14)return;
+ slsLabels=L.layerGroup();
+ data.features.forEach(f=>{
+   const p=f.properties||{}, g=f.geometry;
+   let coords=[];
+   if(g.type==='Polygon') coords=g.coordinates[0];
+   else if(g.type==='MultiPolygon' && g.coordinates[0]) coords=g.coordinates[0][0];
+   if(!coords||!coords.length)return;
+   let x=0,y=0;
+   coords.forEach(pt=>{x+=pt[0];y+=pt[1]});
+   x/=coords.length;y/=coords.length;
+   L.marker([y,x],{icon:L.divIcon({
+     className:'sls-label',
+     html:`<span style="font-size:10px;background:rgba(255,255,255,.75);padding:1px 3px;border-radius:2px;white-space:nowrap">${esc(p.k)} | ${esc(p.d)} | ${esc(p.s)}</span>`,
+     iconSize:null
+   }),interactive:false}).addTo(slsLabels);
+ });
+ slsLabels.addTo(map);
+}
+
+function updateMode(){
+ const z=map.getZoom();
+ if(z<14){
+   $('mode').textContent='Cluster';
+   if(assignmentLayer){map.removeLayer(assignmentLayer);assignmentLayer=null}
+   if(slsLayer){map.removeLayer(slsLayer);slsLayer=null;slsLabels=null}
+   drawClusters();
+ }else if(z<15){
+   $('mode').textContent='Cluster + SLS';
+   drawClusters();
+   ensureSLS();
+   if(assignmentLayer){map.removeLayer(assignmentLayer);assignmentLayer=null}
+   if(slsLayer) updateSLSLabels(slsLayer.toGeoJSON());
+ }else{
+   $('mode').textContent='Assignment + SLS';
+   if(window.clusterLayer){map.removeLayer(window.clusterLayer)}
+   ensureAssignments();
+   ensureSLS();
+   if(slsLayer) updateSLSLabels(slsLayer.toGeoJSON());
+ }
+}
+map.on('zoomend',updateMode);
+map.on('moveend',()=>{ if(map.getZoom()>=15 && assignments) drawAssignments(); });
+
+$('enumFilter').addEventListener('change',e=>{
+ currentFilter=e.target.value;
+ if(map.getZoom()<14) drawClusters();
+ else if(map.getZoom()>=15 && assignments) drawAssignments();
+ else drawClusters();
+});
+
+updateMode();
+</script>
+</body>
+</html>
