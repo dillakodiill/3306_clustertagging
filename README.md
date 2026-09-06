@@ -12,7 +12,7 @@ Peta interaktif cluster geotagging SE2026.
 - Popup detail
 - Filter enumerator
 - Satellite, OpenStreetMap, dan Topographic
-- Lazy loading untuk performa
+- 
 
 ## GitHub Pages
 Setelah Pages aktif:
