@@ -1,18 +1,19 @@
 # Peta Interaktif Cluster Geotagging SE2026
 
-Peta interaktif untuk visualisasi cluster geotagging SE2026.
+Peta interaktif cluster geotagging SE2026.
 
 ## Fitur
-- Cluster geotagging
-- Batas SLS
+- Cluster
+- Batas SLS merah
 - Label Kecamatan | Desa | SLS
-- Titik assignment
+- Assignment pada zoom dekat
 - Label `level_6_full_code | no_bang`
-- Popup detail assignment dan SLS
+- Collision filtering agar label tidak menumpuk
+- Popup detail
 - Filter enumerator
-- Basemap Satellite dan OpenStreetMap
+- Satellite, OpenStreetMap, dan Topographic
+- Lazy loading untuk performa
 
-
-## Akses
-
+## GitHub Pages
+Setelah Pages aktif:
 `https://dillakodiill.github.io/3306_clustertagging/`
