@@ -3,171 +3,303 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Peta Fraud Detector SE2026 - Super Ringan</title>
+<title>Peta Fraud Detector SE2026</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 html,body,#map{height:100%;margin:0}
 body{font-family:Arial,sans-serif}
 #map{background:#eef2f5}
-.panel{position:absolute;z-index:1000;top:10px;left:10px;background:#fff;padding:10px 12px;border-radius:8px;box-shadow:0 2px 12px rgba(0,0,0,.2);font-size:13px;max-width:290px}
-.panel select{width:100%;margin-top:6px;padding:5px}
+.panel{
+ position:absolute;z-index:1000;top:10px;left:10px;
+ background:#fff;padding:10px 12px;border-radius:8px;
+ box-shadow:0 2px 12px rgba(0,0,0,.2);font-size:13px;
+ width:270px;max-width:calc(100vw - 45px)
+}
+.panel select{width:100%;margin-top:6px;padding:6px}
 .status{margin-top:6px;font-size:11px;color:#555}
-.legend{margin-top:7px;line-height:1.5}
+.legend{margin-top:7px;line-height:1.45}
+.assignment-label{
+ font-size:10px;font-weight:600;color:#111;
+ background:rgba(255,255,255,.86);
+ border:1px solid rgba(0,0,0,.25);
+ border-radius:2px;padding:1px 3px;
+ white-space:nowrap;pointer-events:none;
+ box-shadow:0 1px 2px rgba(0,0,0,.15)
+}
+.sls-label{
+ font-size:10px;color:#111;background:rgba(255,255,255,.78);
+ border:1px solid rgba(180,0,0,.35);border-radius:2px;
+ padding:1px 3px;white-space:nowrap;pointer-events:none
+}
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="panel">
-  <b>Fraud Detector SE2026</b>
+  <b>Peta Fraud Detector SE2026</b>
   <div>Mode: <span id="mode">Cluster</span></div>
   <select id="enumFilter"><option value="">Semua Enumerator</option></select>
   <div class="status" id="status">Memuat cluster...</div>
-  <div class="legend">Zoom &lt; 14: cluster<br>Zoom 14: cluster + SLS<br>Zoom ≥ 15: assignment + SLS</div>
+  <div class="legend">
+    Zoom &lt; 14: cluster<br>
+    Zoom 14: cluster + batas SLS<br>
+    Zoom ≥ 15: assignment + batas SLS + label
+  </div>
 </div>
+
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const DATA_BASE = 'peta_fraud_detector_20260906_data/';
+const DATA_BASE = './data/';
 const map = L.map('map',{preferCanvas:true,zoomControl:true}).setView([-7.72,110.0],10);
 
-const satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{
- maxZoom:20,attribution:'Tiles © Esri'
-}).addTo(map);
-const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
- maxZoom:20,attribution:'© OpenStreetMap contributors'
-});
-L.control.layers({'Satellite':satellite,'OpenStreetMap':osm},null,{collapsed:true}).addTo(map);
+const satellite = L.tileLayer(
+ 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+ {maxZoom:20,attribution:'Tiles © Esri'}
+).addTo(map);
 
-let clusters=[], assignments=null, slsLayer=null, assignmentLayer=null;
-let slsLoading=false, assignLoading=false;
+const osm = L.tileLayer(
+ 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+ {maxZoom:20,attribution:'© OpenStreetMap contributors'}
+);
+
+L.control.layers({'Satellite':satellite,'OpenStreetMap':osm}).addTo(map);
+
+let clusters=[];
+let assignments=null;
+let slsData=null;
+let clusterLayer=null;
+let assignmentLayer=null;
+let assignmentLabelLayer=null;
+let slsLayer=null;
+let slsLabelLayer=null;
 let currentFilter='';
+let loading={cluster:false,assignment:false,sls:false};
 
 const $=id=>document.getElementById(id);
-function esc(s){return String(s??'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));}
+function esc(s){
+ return String(s??'').replace(/[&<>"']/g,m=>(
+  {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]
+ ));
+}
 
-fetch(DATA_BASE+'clusters.json').then(r=>r.json()).then(data=>{
- clusters=data;
- const sel=$('enumFilter');
- [...new Set(clusters.map(x=>x.e).filter(Boolean))].sort().forEach(e=>{
-   const o=document.createElement('option'); o.value=e; o.textContent=e; sel.appendChild(o);
- });
- drawClusters();
- $('status').textContent=`${clusters.length} cluster`;
-}).catch(e=>$('status').textContent='Gagal memuat cluster: '+e);
+function setStatus(t){$('status').textContent=t;}
+
+fetch(DATA_BASE+'clusters.json')
+ .then(r=>{if(!r.ok)throw Error(r.status);return r.json()})
+ .then(data=>{
+   clusters=data;
+   const sel=$('enumFilter');
+   [...new Set(clusters.map(x=>x.e).filter(Boolean))].sort()
+    .forEach(e=>{
+      const o=document.createElement('option');
+      o.value=e;o.textContent=e;sel.appendChild(o);
+    });
+   drawClusters();
+   setStatus(`${clusters.length} cluster`);
+ })
+ .catch(e=>setStatus('Gagal memuat cluster: '+e));
 
 function drawClusters(){
- if(window.clusterLayer) map.removeLayer(window.clusterLayer);
- window.clusterLayer=L.layerGroup();
+ if(clusterLayer)map.removeLayer(clusterLayer);
+ clusterLayer=L.layerGroup();
  clusters.forEach(c=>{
    if(currentFilter && c.e!==currentFilter)return;
    const radius=Math.max(7,Math.min(24,5+Math.sqrt(c.u)*2));
    const m=L.circleMarker([c.lat,c.lon],{
-     radius:radius,weight:2,fillOpacity:.75,opacity:.9
+     radius:radius,weight:2,fillOpacity:.72,opacity:.9
    });
-   m.bindPopup(`<b>Cluster</b><br>Enumerator: ${esc(c.e)}<br>Bangunan unik: <b>${c.u}</b><br>Total assignment/KK: ${c.s}<br>Lat: ${c.lat}<br>Lon: ${c.lon}`);
-   window.clusterLayer.addLayer(m);
+   m.bindPopup(
+    `<b>Cluster</b><br>Enumerator: ${esc(c.e)}<br>`+
+    `Bangunan unik: <b>${c.u}</b><br>`+
+    `Total assignment/KK: ${c.s}<br>`+
+    `Lat: ${c.lat}<br>Lon: ${c.lon}`
+   );
+   clusterLayer.addLayer(m);
  });
- window.clusterLayer.addTo(map);
+ clusterLayer.addTo(map);
 }
 
 function ensureAssignments(){
- if(assignments||assignLoading)return;
- assignLoading=true; $('status').textContent='Memuat assignment...';
- fetch(DATA_BASE+'assignments.json').then(r=>r.json()).then(data=>{
-   assignments=data; assignLoading=false; drawAssignments();
- }).catch(e=>{assignLoading=false;$('status').textContent='Gagal memuat assignment';});
+ if(assignments||loading.assignment)return;
+ loading.assignment=true;
+ setStatus('Memuat data assignment...');
+ fetch(DATA_BASE+'assignments.json')
+  .then(r=>{if(!r.ok)throw Error(r.status);return r.json()})
+  .then(data=>{
+    assignments=data;loading.assignment=false;
+    drawAssignments();
+  })
+  .catch(e=>{
+    loading.assignment=false;
+    setStatus('Gagal memuat assignment: '+e);
+  });
+}
+
+function ensureSLS(){
+ if(slsData||loading.sls)return;
+ loading.sls=true;
+ setStatus('Memuat batas SLS...');
+ fetch(DATA_BASE+'sls.json')
+  .then(r=>{if(!r.ok)throw Error(r.status);return r.json()})
+  .then(data=>{
+    slsData=data;loading.sls=false;
+    drawSLS();
+  })
+  .catch(e=>{
+    loading.sls=false;
+    setStatus('Gagal memuat batas SLS: '+e);
+  });
+}
+
+function drawSLS(){
+ if(!slsData)return;
+ if(slsLayer)map.removeLayer(slsLayer);
+ slsLayer=L.geoJSON(slsData,{
+   style:{
+     color:'#e00000',weight:1.2,opacity:.9,
+     fill:false,fillOpacity:0
+   },
+   onEachFeature:(f,l)=>{
+     const p=f.properties||{};
+     l.bindPopup(
+      `<b>SLS</b><br>Kecamatan: ${esc(p.k)}<br>`+
+      `Desa: ${esc(p.d)}<br>SLS: ${esc(p.s)}<br>ID SLS: ${esc(p.i)}`
+     );
+   }
+ }).addTo(map);
+ drawSLSLabels();
+}
+
+function clearSLSLabels(){
+ if(slsLabelLayer){map.removeLayer(slsLabelLayer);slsLabelLayer=null;}
+}
+
+function drawSLSLabels(){
+ clearSLSLabels();
+ if(!slsData || map.getZoom()<14)return;
+ slsLabelLayer=L.layerGroup();
+
+ // Only add labels whose feature center is inside/near the current map view.
+ const b=map.getBounds().pad(.15);
+
+ slsData.features.forEach(f=>{
+   const p=f.properties||{},g=f.geometry;
+   let coords=[];
+   if(g.type==='Polygon')coords=g.coordinates[0];
+   else if(g.type==='MultiPolygon'&&g.coordinates[0])coords=g.coordinates[0][0];
+   if(!coords||!coords.length)return;
+
+   let x=0,y=0;
+   coords.forEach(pt=>{x+=pt[0];y+=pt[1]});
+   x/=coords.length;y/=coords.length;
+
+   if(!b.contains([y,x]))return;
+
+   L.marker([y,x],{
+     icon:L.divIcon({
+       className:'sls-label',
+       html:`${esc(p.k)} | ${esc(p.d)} | ${esc(p.s)}`,
+       iconSize:null
+     }),
+     interactive:false
+   }).addTo(slsLabelLayer);
+ });
+ slsLabelLayer.addTo(map);
 }
 
 function drawAssignments(){
- if(assignmentLayer) map.removeLayer(assignmentLayer);
+ if(!assignments)return;
+
+ if(assignmentLayer)map.removeLayer(assignmentLayer);
+ if(assignmentLabelLayer)map.removeLayer(assignmentLabelLayer);
+
  assignmentLayer=L.layerGroup();
+ assignmentLabelLayer=L.layerGroup();
+
+ // Render only points in/near the viewport to keep zoomed-in performance high.
+ const b=map.getBounds().pad(.15);
+
  assignments.forEach(a=>{
    if(currentFilter && a.e!==currentFilter)return;
-   const m=L.circleMarker([a.la,a.lo],{radius:4,weight:1,fillOpacity:.9,opacity:.9});
+   if(!b.contains([a.la,a.lo]))return;
+
+   const m=L.circleMarker([a.la,a.lo],{
+     radius:4,weight:1,fillOpacity:.9,opacity:.9
+   });
+
    m.bindPopup(
     `<b>Assignment</b><br>`+
     `Assignment ID: ${esc(a.a)}<br>`+
     `Nama: ${esc(a.n)}<br>`+
-    `Level 6: <b>${esc(a.l)}</b><br>`+
+    `Level 6 Full Code: <b>${esc(a.l)}</b><br>`+
     `No Bangunan: <b>${esc(a.b)}</b><br>`+
     `Jenis: ${esc(a.t)}<br>`+
     `Enumerator: ${esc(a.e)}<br>`+
     `Accuracy: ${a.ac??'-'} m`
    );
+
    assignmentLayer.addLayer(m);
+
+   // Permanent label only at zoom >=15 and only for visible points.
+   if(map.getZoom()>=15){
+     L.marker([a.la,a.lo],{
+       icon:L.divIcon({
+         className:'assignment-label',
+         html:`${esc(a.l)} | ${esc(a.b)}`,
+         iconSize:null
+       }),
+       interactive:false
+     }).addTo(assignmentLabelLayer);
+   }
  });
+
  assignmentLayer.addTo(map);
- $('status').textContent=`${assignments.length} assignment`;
-}
+ if(map.getZoom()>=15)assignmentLabelLayer.addTo(map);
 
-function ensureSLS(){
- if(slsLayer||slsLoading)return;
- slsLoading=true; $('status').textContent='Memuat batas SLS...';
- fetch(DATA_BASE+'sls.json').then(r=>r.json()).then(data=>{
-   slsLoading=false;
-   slsLayer=L.geoJSON(data,{
-     style:{weight:1,color:'#e00000',fill:false,opacity:.8},
-     onEachFeature:(f,l)=>{
-       const p=f.properties||{};
-       l.bindPopup(`<b>SLS</b><br>Kecamatan: ${esc(p.k)}<br>Desa: ${esc(p.d)}<br>SLS: ${esc(p.s)}<br>ID SLS: ${esc(p.i)}`);
-     }
-   }).addTo(map);
-   updateSLSLabels(data);
-   $('status').textContent='Batas SLS aktif';
- }).catch(e=>{slsLoading=false;$('status').textContent='Gagal memuat SLS';});
-}
-
-let slsLabels=null;
-function updateSLSLabels(data){
- if(slsLabels){map.removeLayer(slsLabels);slsLabels=null;}
- if(map.getZoom()<14)return;
- slsLabels=L.layerGroup();
- data.features.forEach(f=>{
-   const p=f.properties||{}, g=f.geometry;
-   let coords=[];
-   if(g.type==='Polygon') coords=g.coordinates[0];
-   else if(g.type==='MultiPolygon' && g.coordinates[0]) coords=g.coordinates[0][0];
-   if(!coords||!coords.length)return;
-   let x=0,y=0;
-   coords.forEach(pt=>{x+=pt[0];y+=pt[1]});
-   x/=coords.length;y/=coords.length;
-   L.marker([y,x],{icon:L.divIcon({
-     className:'sls-label',
-     html:`<span style="font-size:10px;background:rgba(255,255,255,.75);padding:1px 3px;border-radius:2px;white-space:nowrap">${esc(p.k)} | ${esc(p.d)} | ${esc(p.s)}</span>`,
-     iconSize:null
-   }),interactive:false}).addTo(slsLabels);
- });
- slsLabels.addTo(map);
+ setStatus(`${assignments.length} assignment | titik terlihat diperbarui`);
 }
 
 function updateMode(){
  const z=map.getZoom();
+
  if(z<14){
    $('mode').textContent='Cluster';
    if(assignmentLayer){map.removeLayer(assignmentLayer);assignmentLayer=null}
-   if(slsLayer){map.removeLayer(slsLayer);slsLayer=null;slsLabels=null}
+   if(assignmentLabelLayer){map.removeLayer(assignmentLabelLayer);assignmentLabelLayer=null}
+   if(slsLayer){map.removeLayer(slsLayer);slsLayer=null}
+   clearSLSLabels();
    drawClusters();
- }else if(z<15){
-   $('mode').textContent='Cluster + SLS';
-   drawClusters();
-   ensureSLS();
-   if(assignmentLayer){map.removeLayer(assignmentLayer);assignmentLayer=null}
-   if(slsLayer) updateSLSLabels(slsLayer.toGeoJSON());
- }else{
-   $('mode').textContent='Assignment + SLS';
-   if(window.clusterLayer){map.removeLayer(window.clusterLayer)}
-   ensureAssignments();
-   ensureSLS();
-   if(slsLayer) updateSLSLabels(slsLayer.toGeoJSON());
+   return;
  }
+
+ if(z<15){
+   $('mode').textContent='Cluster + SLS';
+   if(assignmentLayer){map.removeLayer(assignmentLayer);assignmentLayer=null}
+   if(assignmentLabelLayer){map.removeLayer(assignmentLabelLayer);assignmentLabelLayer=null}
+   drawClusters();
+   ensureSLS();
+   if(slsData)drawSLS();
+   return;
+ }
+
+ $('mode').textContent='Assignment + SLS';
+ if(clusterLayer)map.removeLayer(clusterLayer);
+ ensureAssignments();
+ ensureSLS();
+ if(assignments)drawAssignments();
+ if(slsData)drawSLS();
 }
+
 map.on('zoomend',updateMode);
-map.on('moveend',()=>{ if(map.getZoom()>=15 && assignments) drawAssignments(); });
+map.on('moveend',()=>{
+ if(map.getZoom()>=14 && slsData)drawSLSLabels();
+ if(map.getZoom()>=15 && assignments)drawAssignments();
+});
 
 $('enumFilter').addEventListener('change',e=>{
  currentFilter=e.target.value;
- if(map.getZoom()<14) drawClusters();
- else if(map.getZoom()>=15 && assignments) drawAssignments();
- else drawClusters();
+ if(map.getZoom()<15)drawClusters();
+ else if(assignments)drawAssignments();
 });
 
 updateMode();
