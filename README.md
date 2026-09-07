@@ -1,10 +1,14 @@
-# Peta Interaktif Cluster Geotagging SE2026
+# 3306_clustertagging
 
-Peta interaktif cluster, assignment, dan batas SLS.
+Peta interaktif Fraud Detector SE2026.
 
-- Zoom < 14: cluster
-- Zoom 14–15: cluster + batas SLS
-- Zoom >= 16: assignment + batas SLS + label
-- Label assignment: `level_6_full_code | no_bang`
-- Batas SLS merah dan label `Kecamatan | Desa | SLS`
-- Filter enumerator
+## GitHub Pages
+
+1. Upload `index.html` ke root repository.
+2. Buka **Settings → Pages**.
+3. Pada **Build and deployment**, pilih **Deploy from a branch**.
+4. Branch: `main`, folder: `/ (root)`.
+5. Klik **Save**.
+
+Alamat GitHub Pages:
+`https://dillakodiill.github.io/3306_clustertagging/`
